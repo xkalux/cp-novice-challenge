@@ -1,0 +1,18 @@
+{
+  "name": "cp-novice-challenge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "dev": "bun run src/index.ts",
+    "test": "bun test tests/public",
+    "lint": "bunx tsc --noEmit",
+    "lint:student-rules": "bun run scripts/check-student-rules.ts",
+    "check": "bun run lint && bun run lint:student-rules && bun run test"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.6.3"
+  }
+}
