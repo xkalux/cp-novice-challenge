@@ -1,7 +1,8 @@
 # Todo Manager Assignment
 
 ## Installation
-โปรเจกต์นี้ใช้ Bun และ TypeScript สำหรับนักศึกษาเริ่มต้น โดยออกแบบให้ฝึกพื้นฐานการเขียนโปรแกรมเชิงกระบวนการ (procedural programming)
+โปรเจกต์นี้ใช้ Bun และ TypeScript สำหรับวิชา Computer Programming 
+ออกแบบให้ฝึกพื้นฐานการเขียนโปรแกรมเชิงกระบวนการ (procedural programming)
 
 ## Setup
 1. ติดตั้ง Bun
