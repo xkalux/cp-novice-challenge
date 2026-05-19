@@ -14,6 +14,9 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    outputs:
+      public_passed: ${{ steps.capture-public-counts.outputs.public_passed }}
+      public_total: ${{ steps.capture-public-counts.outputs.public_total }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -28,3 +31,99 @@ jobs:
 
       - name: Run public checks
         run: bun run check
+
+      - name: Capture public test counts
+        id: capture-public-counts
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun run test 2>&1 | tee public-test-output.txt
+
+          PASS_COUNT="$(grep -Eo '[0-9]+ pass' public-test-output.txt | tail -1 | awk '{print $1}')"
+          FAIL_COUNT="$(grep -Eo '[0-9]+ fail' public-test-output.txt | tail -1 | awk '{print $1}')"
+          TOTAL_COUNT="$(grep -Eo 'Ran [0-9]+ tests?' public-test-output.txt | tail -1 | awk '{print $2}')"
+
+          if [[ -z "${PASS_COUNT}" ]]; then
+            echo "Unable to determine public test pass count"
+            exit 1
+          fi
+
+          if [[ -z "${FAIL_COUNT}" ]]; then
+            FAIL_COUNT='0'
+          fi
+
+          if [[ -z "${TOTAL_COUNT}" ]]; then
+            TOTAL_COUNT=$((PASS_COUNT + FAIL_COUNT))
+          fi
+
+          echo "public_passed=${PASS_COUNT}" >> "$GITHUB_OUTPUT"
+          echo "public_total=${TOTAL_COUNT}" >> "$GITHUB_OUTPUT"
+
+  dispatch-secure-grading:
+    runs-on: ubuntu-latest
+    needs:
+      - verify
+    if: github.event_name == 'push' && needs.verify.result == 'success'
+    steps:
+      - name: Dispatch grading event to instructor repository
+        shell: bash
+        env:
+          DISPATCH_TOKEN: ${{ secrets.GRADING_TRIGGER_APP_TOKEN }}
+          PUBLIC_PASSED: ${{ needs.verify.outputs.public_passed }}
+          PUBLIC_TOTAL: ${{ needs.verify.outputs.public_total }}
+          TARGET_REPO: ${{ github.repository_owner }}/cp-novice-challenge-instructor-operations
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${DISPATCH_TOKEN}" ]]; then
+            echo "Missing GRADING_TRIGGER_APP_TOKEN secret"
+            echo "Fix: add GitHub App installation token as GRADING_TRIGGER_APP_TOKEN in repository or organization secrets."
+            exit 1
+          fi
+
+          RESPONSE_FILE="dispatch-response.json"
+          HTTP_STATUS="$(curl -sS \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${DISPATCH_TOKEN}" \
+            "https://api.github.com/repos/${TARGET_REPO}/dispatches" \
+            -o "${RESPONSE_FILE}" \
+            -w "%{http_code}" \
+            -d @- <<JSON
+          {
+            "event_type": "public-ci-passed",
+            "client_payload": {
+              "student_repo": "${{ github.repository }}",
+              "ref": "${{ github.sha }}",
+              "public_passed": "${PUBLIC_PASSED}",
+              "public_total": "${PUBLIC_TOTAL}",
+              "source_run_id": "${{ github.run_id }}"
+            }
+          }
+          JSON
+          )"
+
+          if [[ "${HTTP_STATUS}" == "204" ]]; then
+            echo "Dispatch succeeded: event=public-ci-passed target=${TARGET_REPO}"
+            exit 0
+          fi
+
+          echo "Dispatch failed: event=public-ci-passed target=${TARGET_REPO} http_status=${HTTP_STATUS}"
+          if [[ -s "${RESPONSE_FILE}" ]]; then
+            echo "GitHub API response body:"
+            cat "${RESPONSE_FILE}"
+          fi
+
+          if [[ "${HTTP_STATUS}" == "401" ]]; then
+            echo "Action needed: GRADING_TRIGGER_APP_TOKEN is invalid or expired. Regenerate token and update secret."
+            exit 1
+          fi
+
+          if [[ "${HTTP_STATUS}" == "403" ]]; then
+            echo "Action needed: GitHub App lacks access to target repository or missing permission for repository dispatch/workflows."
+            echo "Check app installation on ${TARGET_REPO} and required permissions, then retry."
+            exit 1
+          fi
+
+          echo "Action needed: unexpected dispatch error. Verify GitHub App installation, permissions, and API availability."
+          exit 1
